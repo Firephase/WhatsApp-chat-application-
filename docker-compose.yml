@@ -3,6 +3,8 @@ services:
     build: .
     container_name: wa-analyzer
     restart: unless-stopped
+    ports:
+      - "3000:3000"
     volumes:
       - ./data:/app/data
     stdin_open: true

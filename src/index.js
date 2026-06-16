@@ -5,15 +5,18 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
-import qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { saveMessage, getKeywords, getDb } from './db.js';
-import { log, startInteractiveMode, joinLink } from './ui.js';
+import { log, startInteractiveMode, joinLink, setSocket } from './ui.js';
+import { startServer, broadcast } from './server.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AUTH_DIR  = path.join(__dirname, '../data/auth');
 const logger    = pino({ level: 'silent' });
+
+await startServer(3000);
 
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -21,10 +24,10 @@ async function connectToWhatsApp() {
 
   const sock = makeWASocket({
     version,
-    auth:               state,
+    auth:              state,
     logger,
-    printQRInTerminal:  false,
-    browser:            ['WhatsApp Analyzer', 'Chrome', '120.0.0'],
+    printQRInTerminal: false,
+    browser:           ['WhatsApp Analyzer', 'Chrome', '120.0.0'],
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -33,17 +36,22 @@ async function connectToWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      log('connect', 'Отсканируй QR-код в WhatsApp → Связанные устройства → Привязать:\n');
-      qrcode.generate(qr, { small: true });
+      const dataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 300 });
+      broadcast('qr', dataUrl);
+      log('connect', 'QR-код обновлён — открой веб-интерфейс для сканирования');
     }
 
     if (connection === 'open') {
+      setSocket(sock);
+      broadcast('connected', null);
       log('success', 'Подключено к WhatsApp');
       startInteractiveMode(sock);
       await processPendingLinks();
     }
 
     if (connection === 'close') {
+      setSocket(null);
+      broadcast('disconnected', null);
       const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
       if (reason === DisconnectReason.loggedOut) {
         log('error', 'Аккаунт разлогинен. Удали папку data/auth/ и перезапусти.');
@@ -78,6 +86,7 @@ async function connectToWhatsApp() {
 
       saveMessage(jid, groupName, sender, text, matched);
       log('match', `"${groupName}"  [${matched.join(', ')}]  ${text.substring(0, 100)}`);
+      broadcast('match', { group_jid: jid, group_name: groupName, sender, message: text, matched_keywords: matched.join(','), received_at: new Date().toISOString() });
     }
   });
 }

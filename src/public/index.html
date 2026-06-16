@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WA Analyzer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* Header */
+header{background:#161b22;border-bottom:1px solid #30363d;padding:10px 18px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+header h1{font-size:15px;font-weight:600}
+.badge{padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
+.badge.ok{background:#1a4731;color:#3fb950}
+.badge.err{background:#3d1f1f;color:#f85149}
+.badge.wait{background:#2d2718;color:#e3b341}
+
+/* Layout */
+.layout{display:grid;grid-template-columns:220px 1fr 260px;flex:1;overflow:hidden}
+.col{border-right:1px solid #21262d;display:flex;flex-direction:column;overflow:hidden}
+.col:last-child{border-right:none;border-left:1px solid #21262d}
+.col-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#6e7681;padding:8px 12px;border-bottom:1px solid #21262d;flex-shrink:0}
+
+/* Left col */
+#qr-wrap{padding:14px;text-align:center;border-bottom:1px solid #21262d;flex-shrink:0}
+#qr-img{width:160px;height:160px;border-radius:8px;background:#fff;padding:6px;display:none}
+#qr-placeholder{color:#8b949e;font-size:12px;line-height:1.8;padding:10px 0}
+#qr-hint{font-size:11px;color:#8b949e;margin-top:6px;display:none;line-height:1.6}
+.stats{padding:10px 12px;display:flex;flex-direction:column;gap:5px;overflow-y:auto;flex:1}
+.stat{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0}
+.stat-label{color:#8b949e;display:flex;align-items:center;gap:6px}
+.stat-val{font-weight:700}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.g{background:#3fb950}.r{background:#f85149}.y{background:#e3b341}.b{background:#58a6ff}.p{background:#bc8cff}
+
+/* Log */
+#log{flex:1;overflow-y:auto;padding:6px;font-family:'Cascadia Code','Fira Code','Courier New',monospace;font-size:11.5px;line-height:1.65}
+.le{padding:1px 5px;border-radius:3px;display:flex;gap:6px;align-items:baseline}
+.le:hover{background:#161b22}
+.lt{color:#484f58;flex-shrink:0}
+.li{flex-shrink:0;width:14px;text-align:center}
+.lm{color:#c9d1d9;word-break:break-word}
+.l-info .li{color:#58a6ff}.l-success .li{color:#3fb950}.l-error .li{color:#f85149}
+.l-stage .li{color:#e3b341}.l-match .li{color:#bc8cff}.l-warn .li{color:#e3b341}.l-connect .li{color:#58a6ff}
+
+/* Right col */
+.section{padding:12px;border-bottom:1px solid #21262d;flex-shrink:0}
+label{font-size:11px;color:#8b949e;display:block;margin-bottom:5px}
+input[type=text],input[type=url]{width:100%;background:#010409;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:7px 10px;font-size:12px;outline:none}
+input:focus{border-color:#388bfd}
+.btn{width:100%;padding:7px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;margin-top:6px}
+.btn-primary{background:#238636;color:#fff}.btn-primary:hover{background:#2ea043}
+.btn-sm{width:auto;padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid #30363d;background:none;color:#8b949e}.btn-sm:hover{color:#f85149}
+
+#kw-list{overflow-y:auto;flex:1;padding:4px 12px}
+.kw-item{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #21262d;font-size:12px}
+.kw-item:last-child{border-bottom:none}
+.kw-item input[type=checkbox]{accent-color:#3fb950;cursor:pointer}
+.kw-word{flex:1;color:#e6edf3}
+
+/* Matches */
+.matches{border-top:1px solid #30363d;max-height:200px;display:flex;flex-direction:column;flex-shrink:0}
+#matches-wrap{overflow-y:auto;flex:1}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{background:#161b22;color:#8b949e;font-weight:500;text-align:left;padding:5px 10px;border-bottom:1px solid #21262d;position:sticky;top:0;z-index:1}
+td{padding:4px 10px;border-bottom:1px solid #161b22;color:#c9d1d9;vertical-align:top}
+td.kw{color:#bc8cff}td.t{color:#484f58;white-space:nowrap}
+tr:hover td{background:#161b22}
+.empty{color:#484f58;font-size:11px;padding:10px;text-align:center}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📱 WhatsApp Analyzer</h1>
+  <span id="badge" class="badge wait">Подключение...</span>
+  <span style="margin-left:auto;font-size:11px;color:#484f58" id="ws-status">WS: ожидание</span>
+</header>
+
+<div class="layout">
+
+  <!-- Left: Status + Stats -->
+  <div class="col">
+    <div class="col-title">Статус</div>
+    <div id="qr-wrap">
+      <div id="qr-placeholder">Ожидание QR-кода...<br><small>Запусти приложение</small></div>
+      <img id="qr-img" alt="QR">
+      <div id="qr-hint">Открой WhatsApp → Связанные устройства → Привязать устройство</div>
+    </div>
+    <div class="col-title">Статистика</div>
+    <div class="stats">
+      <div class="stat"><span class="stat-label"><span class="dot g"></span>Вступил</span><span class="stat-val" id="s-j">—</span></div>
+      <div class="stat"><span class="stat-label"><span class="dot r"></span>Ошибка</span><span class="stat-val" id="s-f">—</span></div>
+      <div class="stat"><span class="stat-label"><span class="dot y"></span>Ожидание</span><span class="stat-val" id="s-p">—</span></div>
+      <div class="stat"><span class="stat-label"><span class="dot b"></span>Слов</span><span class="stat-val" id="s-k">—</span></div>
+      <div class="stat"><span class="stat-label"><span class="dot p"></span>Совпадений</span><span class="stat-val" id="s-m">—</span></div>
+    </div>
+  </div>
+
+  <!-- Center: Log -->
+  <div class="col" style="border-right:none">
+    <div class="col-title">Лог событий <span style="font-weight:400;text-transform:none;letter-spacing:0" id="log-count"></span></div>
+    <div id="log"></div>
+  </div>
+
+  <!-- Right: Controls -->
+  <div class="col">
+    <div class="col-title">Добавить группу</div>
+    <div class="section">
+      <label>Ссылка-приглашение</label>
+      <input type="url" id="link-input" placeholder="https://chat.whatsapp.com/...">
+      <button class="btn btn-primary" onclick="addLink()">Вступить в группу</button>
+    </div>
+
+    <div class="col-title">Ключевые слова</div>
+    <div id="kw-list"><div class="empty">Слов нет</div></div>
+
+    <div class="section" style="border-top:1px solid #21262d;border-bottom:none">
+      <label>Добавить слова (через запятую)</label>
+      <input type="text" id="kw-input" placeholder="слово1, слово2">
+      <button class="btn btn-primary" onclick="addKeywords()">Добавить</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Matches -->
+<div class="matches">
+  <div class="col-title">Совпадения по ключевым словам</div>
+  <div id="matches-wrap">
+    <table>
+      <thead><tr><th>Время</th><th>Группа</th><th>Слова</th><th>Сообщение</th></tr></thead>
+      <tbody id="mtbody"><tr><td colspan="4" class="empty">Совпадений пока нет</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const ICONS = {info:'ℹ',success:'✓',error:'✗',stage:'→',match:'★',warn:'⚠',connect:'⟳'};
+let logCount = 0;
+let autoScroll = true;
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+let ws;
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}`);
+  ws.onopen  = () => setWsStatus('ок');
+  ws.onclose = () => { setWsStatus('переподключение...'); setTimeout(connectWS, 3000); };
+  ws.onmessage = e => {
+    const {type, data} = JSON.parse(e.data);
+    if (type === 'log')          appendLog(data);
+    else if (type === 'qr')      showQR(data);
+    else if (type === 'connected')    onConnected();
+    else if (type === 'disconnected') onDisconnected();
+    else if (type === 'match')   prependMatch(data);
+    else if (type === 'stats')   renderStats(data);
+  };
+}
+function setWsStatus(t) { document.getElementById('ws-status').textContent = 'WS: ' + t; }
+connectWS();
+
+// ── QR / connection ────────────────────────────────────────────────────────
+function showQR(url) {
+  document.getElementById('qr-placeholder').style.display = 'none';
+  const img = document.getElementById('qr-img');
+  img.src = url; img.style.display = 'block';
+  document.getElementById('qr-hint').style.display = 'block';
+  setBadge('wait', 'Ожидание сканирования...');
+}
+function onConnected() {
+  document.getElementById('qr-img').style.display = 'none';
+  document.getElementById('qr-hint').style.display = 'none';
+  const ph = document.getElementById('qr-placeholder');
+  ph.innerHTML = '<span style="color:#3fb950;font-size:22px">✓</span><br><span style="color:#3fb950;font-size:12px">Подключено</span>';
+  ph.style.display = 'block';
+  setBadge('ok', 'Подключено');
+  refresh();
+}
+function onDisconnected() {
+  const ph = document.getElementById('qr-placeholder');
+  ph.textContent = 'Ожидание QR-кода...';
+  ph.style.display = 'block';
+  document.getElementById('qr-img').style.display = 'none';
+  setBadge('err', 'Отключено');
+}
+function setBadge(cls, txt) {
+  const b = document.getElementById('badge');
+  b.className = 'badge ' + cls; b.textContent = txt;
+}
+
+// ── Log ────────────────────────────────────────────────────────────────────
+const logEl = document.getElementById('log');
+logEl.addEventListener('scroll', () => {
+  autoScroll = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 40;
+});
+
+function appendLog(e) {
+  const t   = new Date(e.time).toLocaleTimeString('ru-RU',{hour12:false});
+  const div = document.createElement('div');
+  div.className = 'le l-' + e.type;
+  div.innerHTML = `<span class="lt">${t}</span><span class="li">${ICONS[e.type]??'·'}</span><span class="lm">${esc(e.message)}</span>`;
+  logEl.appendChild(div);
+  if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
+  document.getElementById('log-count').textContent = `(${++logCount})`;
+}
+
+// ── Links ──────────────────────────────────────────────────────────────────
+async function addLink() {
+  const inp  = document.getElementById('link-input');
+  const link = inp.value.trim();
+  if (!link.match(/chat\.whatsapp\.com\/[A-Za-z0-9]+/)) {
+    flash(inp, '#f85149'); return;
+  }
+  inp.disabled = true;
+  await api('POST', '/api/links', { link });
+  inp.value = ''; inp.disabled = false; inp.focus();
+}
+
+// ── Keywords ───────────────────────────────────────────────────────────────
+async function loadKeywords() {
+  const kws  = await api('GET', '/api/keywords');
+  const list = document.getElementById('kw-list');
+  list.innerHTML = '';
+  if (!kws?.length) { list.innerHTML = '<div class="empty">Слов нет</div>'; return; }
+  for (const kw of kws) {
+    const d = document.createElement('div');
+    d.className = 'kw-item';
+    d.innerHTML = `<input type="checkbox" ${kw.active?'checked':''} onchange="toggleKw(${kw.id},this.checked)">
+                   <span class="kw-word">${esc(kw.word)}</span>
+                   <button class="btn-sm" onclick="deleteKw(${kw.id},this)">✕</button>`;
+    list.appendChild(d);
+  }
+}
+
+async function toggleKw(id, active) {
+  await api('PATCH', `/api/keywords/${id}`, { active });
+}
+
+async function deleteKw(id, btn) {
+  btn.closest('.kw-item').remove();
+  await api('DELETE', `/api/keywords/${id}`);
+  refresh();
+}
+
+async function addKeywords() {
+  const inp   = document.getElementById('kw-input');
+  const words = inp.value.split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
+  if (!words.length) { flash(inp, '#f85149'); return; }
+  inp.disabled = true;
+  await api('POST', '/api/keywords', { words });
+  inp.value = ''; inp.disabled = false; inp.focus();
+  loadKeywords(); refresh();
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────────
+function renderStats(s) {
+  const by = {};
+  for (const r of (s.links||[])) by[r.status] = r.c;
+  document.getElementById('s-j').textContent = by.joined  ?? 0;
+  document.getElementById('s-f').textContent = by.failed  ?? 0;
+  document.getElementById('s-p').textContent = by.pending ?? 0;
+  document.getElementById('s-k').textContent = s.keywords ?? 0;
+  document.getElementById('s-m').textContent = s.messages ?? 0;
+}
+
+// ── Matches ────────────────────────────────────────────────────────────────
+async function loadMatches() {
+  const rows  = await api('GET', '/api/matches');
+  const tbody = document.getElementById('mtbody');
+  tbody.innerHTML = '';
+  if (!rows?.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Совпадений пока нет</td></tr>';
+    return;
+  }
+  for (const r of rows) tbody.appendChild(matchRow(r));
+}
+
+function prependMatch(r) {
+  const tbody = document.getElementById('mtbody');
+  const empty = tbody.querySelector('.empty');
+  if (empty) empty.closest('tr').remove();
+  tbody.insertBefore(matchRow(r), tbody.firstChild);
+  refresh();
+}
+
+function matchRow(r) {
+  const tr = document.createElement('tr');
+  const t  = r.received_at ? new Date(r.received_at).toLocaleString('ru-RU',{hour12:false}) : '—';
+  tr.innerHTML = `<td class="t">${t}</td><td>${esc(r.group_name||r.group_jid)}</td>
+    <td class="kw">${esc(r.matched_keywords||'')}</td>
+    <td>${esc((r.message||'').substring(0,140))}</td>`;
+  return tr;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+async function api(method, url, body) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res = await fetch(url, opts);
+    return res.ok ? res.json() : null;
+  } catch { return null; }
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function flash(el, color) {
+  el.style.borderColor = color;
+  setTimeout(() => el.style.borderColor = '', 1000);
+}
+
+async function refresh() {
+  const s = await api('GET', '/api/stats');
+  if (s) renderStats(s);
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.getElementById('link-input').onkeydown = e => e.key==='Enter' && addLink();
+document.getElementById('kw-input').onkeydown   = e => e.key==='Enter' && addKeywords();
+loadKeywords();
+loadMatches();
+refresh();
+</script>
+</body>
+</html>

@@ -1,13 +1,15 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import readline from 'readline';
-import { addInviteLink, addKeyword, updateLinkStatus, getKeywords, getDb } from './db.js';
+import { addLogListener, log } from './log.js';
+import { addInviteLink, addKeyword, updateLinkStatus, getDb } from './db.js';
 
-let waSocket = null;
+export { log };
+
+// ─── Console printer (registered as log listener) ────────────────────────────
+
 let isPrompting = false;
-const pendingLogs = [];
-
-// ─── Logging ─────────────────────────────────────────────────────────────────
+const pendingConsole = [];
 
 const ICONS = {
   info:    chalk.cyan('ℹ'),
@@ -19,28 +21,27 @@ const ICONS = {
   connect: chalk.blue('⟳'),
 };
 
-export function log(type, message) {
-  const time = chalk.gray(new Date().toLocaleTimeString('ru-RU', { hour12: false }));
-  const icon = ICONS[type] ?? ICONS.info;
-  const line = `${time} ${icon}  ${message}`;
-  if (isPrompting) {
-    pendingLogs.push(line);
-  } else {
-    console.log(line);
-  }
+addLogListener(entry => {
+  const t    = new Date(entry.time).toLocaleTimeString('ru-RU', { hour12: false });
+  const icon = ICONS[entry.type] ?? ICONS.info;
+  const line = `${chalk.gray(t)} ${icon}  ${entry.message}`;
+  if (isPrompting) pendingConsole.push(line);
+  else console.log(line);
+});
+
+function flushConsole() {
+  while (pendingConsole.length) console.log(pendingConsole.shift());
 }
 
-function flushPending() {
-  while (pendingLogs.length) console.log(pendingLogs.shift());
-}
+// ─── Terminal interactive mode ────────────────────────────────────────────────
 
-// ─── Interactive mode ─────────────────────────────────────────────────────────
+let waSocket = null;
 
 export function startInteractiveMode(sock) {
   waSocket = sock;
 
   if (!process.stdin.isTTY) {
-    log('warn', 'Нет TTY — интерактивный ввод недоступен. Запускай без флага -d или через docker attach.');
+    log('info', 'Терминальный ввод недоступен (нет TTY) — управляй через веб-интерфейс');
     return;
   }
 
@@ -58,103 +59,71 @@ export function startInteractiveMode(sock) {
 
   process.stdin.on('keypress', async (str, key) => {
     if (isPrompting) return;
-    if (key.ctrl && key.name === 'c') {
-      console.log('\n' + chalk.dim('Выход.'));
-      process.exit(0);
-    }
+    if (key.ctrl && key.name === 'c') { console.log(''); process.exit(0); }
     switch ((key.name ?? str)?.toLowerCase()) {
       case 'a': await cmdAddLink(); break;
       case 'k': await cmdManageKeywords(); break;
-      case 's': cmdStats(); break;
     }
   });
 }
 
 function printHelpBar() {
-  console.log(chalk.dim('\n  Клавиши: [A] добавить ссылку  [K] ключевые слова  [S] статистика  [Ctrl+C] выход\n'));
+  console.log(chalk.dim('\n  [A] добавить ссылку  [K] ключевые слова  [Ctrl+C] выход\n'));
 }
-
-// ─── withPrompt wrapper ───────────────────────────────────────────────────────
 
 async function withPrompt(fn) {
   isPrompting = true;
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
   console.log('');
-  try {
-    await fn();
-  } catch (e) {
-    if (e?.name !== 'ExitPromptError') {
-      log('error', `Ошибка ввода: ${e.message}`);
-    }
+  try { await fn(); } catch (e) {
+    if (e?.name !== 'ExitPromptError') log('error', `Ошибка ввода: ${e.message}`);
   }
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   isPrompting = false;
-  flushPending();
+  flushConsole();
   printHelpBar();
 }
-
-// ─── Commands ─────────────────────────────────────────────────────────────────
 
 async function cmdAddLink() {
   await withPrompt(async () => {
     const { link } = await inquirer.prompt([{
       type: 'input',
       name: 'link',
-      message: chalk.bold('Ссылка на группу') + chalk.dim(' (https://chat.whatsapp.com/...):'),
-      validate: v =>
-        v.trim().match(/chat\.whatsapp\.com\/[A-Za-z0-9]+/)
-          ? true
-          : chalk.red('Некорректная ссылка. Нужно: https://chat.whatsapp.com/XXXX'),
+      message: 'Ссылка на группу:',
+      validate: v => v.trim().match(/chat\.whatsapp\.com\/[A-Za-z0-9]+/) || 'Некорректная ссылка',
     }]);
-
     const trimmed = link.trim();
     addInviteLink(trimmed);
-
-    // выключить режим промпта чтобы joinLink логировал сразу
     isPrompting = false;
-    flushPending();
-
+    flushConsole();
     await joinLink(trimmed);
   });
 }
 
 async function cmdManageKeywords() {
   await withPrompt(async () => {
-    const db = getDb();
+    const db  = getDb();
     const all = db.prepare('SELECT id, word, active FROM keywords ORDER BY word').all();
 
-    if (all.length > 0) {
-      console.log(chalk.bold('  Текущие ключевые слова:'));
+    if (all.length) {
       const { activeIds } = await inquirer.prompt([{
         type: 'checkbox',
         name: 'activeIds',
-        message: 'Отмечены активные (Space = вкл/выкл, Enter = сохранить):',
-        choices: all.map(k => ({
-          name:    k.word,
-          value:   k.id,
-          checked: k.active === 1,
-        })),
-        pageSize: 15,
+        message: 'Ключевые слова (Space = вкл/выкл):',
+        choices: all.map(k => ({ name: k.word, value: k.id, checked: k.active === 1 })),
       }]);
-
       db.prepare('UPDATE keywords SET active = 0').run();
-      for (const id of activeIds) {
-        db.prepare('UPDATE keywords SET active = 1 WHERE id = ?').run(id);
-      }
-      log('success', `Активных слов: ${chalk.bold(activeIds.length)} из ${all.length}`);
-    } else {
-      console.log(chalk.dim('  Ключевых слов ещё нет.\n'));
+      for (const id of activeIds) db.prepare('UPDATE keywords SET active = 1 WHERE id = ?').run(id);
+      log('success', `Активных слов: ${activeIds.length}`);
     }
 
     const { newWords } = await inquirer.prompt([{
       type: 'input',
       name: 'newWords',
-      message: 'Добавить новые слова через запятую' + chalk.dim(' (или Enter, чтобы пропустить)') + ':',
+      message: 'Добавить слова через запятую (или Enter пропустить):',
     }]);
-
     if (newWords.trim()) {
-      const words = newWords.split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
-      for (const w of words) {
+      for (const w of newWords.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)) {
         addKeyword(w);
         log('success', `Добавлено: ${chalk.bold(w)}`);
       }
@@ -162,25 +131,9 @@ async function cmdManageKeywords() {
   });
 }
 
-function cmdStats() {
-  const db = getDb();
-  const links  = db.prepare('SELECT status, COUNT(*) as c FROM invite_links GROUP BY status').all();
-  const msgs   = db.prepare('SELECT COUNT(*) as c FROM messages').get();
-  const kwsAct = db.prepare('SELECT COUNT(*) as c FROM keywords WHERE active = 1').get();
-  const kwsAll = db.prepare('SELECT COUNT(*) as c FROM keywords').get();
+// ─── Join logic (used by both terminal and web server) ───────────────────────
 
-  console.log(chalk.bold('\n  СТАТИСТИКА:'));
-  if (!links.length) console.log(chalk.dim('    Ссылок нет.'));
-  for (const l of links) {
-    const dot = l.status === 'joined' ? chalk.green('●') : l.status === 'failed' ? chalk.red('●') : chalk.yellow('●');
-    console.log(`    ${dot}  ${l.status.padEnd(12)} ${chalk.bold(l.c)}`);
-  }
-  console.log(`    ${chalk.blue('●')}  ${'ключ. слов'.padEnd(12)} ${chalk.bold(kwsAct.c)} / ${kwsAll.c} всего`);
-  console.log(`    ${chalk.magenta('●')}  ${'совпадений'.padEnd(12)} ${chalk.bold(msgs.c)}`);
-  console.log('');
-}
-
-// ─── Join logic ───────────────────────────────────────────────────────────────
+export function setSocket(sock) { waSocket = sock; }
 
 export async function joinLink(link) {
   const db  = getDb();
@@ -188,17 +141,17 @@ export async function joinLink(link) {
   const m   = link.match(/chat\.whatsapp\.com\/([A-Za-z0-9]+)/);
 
   if (!m) {
-    log('error', `Нет кода приглашения в ссылке: ${chalk.dim(link)}`);
+    log('error', `Нет кода приглашения в ссылке: ${link}`);
     if (row) updateLinkStatus(row.id, 'invalid', { error: 'Нет кода' });
     return;
   }
 
   const code = m[1];
-  log('stage', `Ссылка: ${chalk.dim(link)}`);
+  log('stage', `Ссылка:          ${chalk.dim(link)}`);
   log('stage', `Код приглашения: ${chalk.bold(code)}`);
 
   if (!waSocket) {
-    log('error', 'WhatsApp не подключён, попробуй позже');
+    log('error', 'WhatsApp не подключён — дождись QR и авторизации');
     return;
   }
 
@@ -206,7 +159,7 @@ export async function joinLink(link) {
 
   try {
     const jid = await waSocket.groupAcceptInvite(code);
-    log('stage', `JID получен: ${chalk.dim(jid)}`);
+    log('stage', `JID: ${chalk.dim(jid)}`);
     log('stage', 'Получаю данные группы...');
 
     await new Promise(r => setTimeout(r, 2000));
@@ -215,20 +168,14 @@ export async function joinLink(link) {
     const count = meta?.participants?.length ?? '?';
 
     if (row) updateLinkStatus(row.id, 'joined', { jid, name });
-    log('success',
-      `${chalk.green.bold('ВСТУПИЛ')}  "${chalk.bold(name)}"  участников: ${chalk.bold(count)}  ${chalk.dim(jid)}`
-    );
+    log('success', `ВСТУПИЛ → "${chalk.bold(name)}"  участников: ${chalk.bold(count)}  ${chalk.dim(jid)}`);
   } catch (e) {
     const statusCode = e?.output?.statusCode ?? e?.data?.code ?? '';
     const reason     = resolveWaError(e, statusCode);
-    const tag        = statusCode ? chalk.bold(`[${statusCode}]`) : '';
     const errStr     = [statusCode && `[${statusCode}]`, reason].filter(Boolean).join(' ');
-
     if (row) updateLinkStatus(row.id, 'failed', { error: errStr });
-    log('error', `${chalk.red.bold('ОШИБКА')} ${tag}  ${reason}`);
-    if (e.message && e.message !== reason) {
-      log('error', `Детали: ${chalk.dim(e.message)}`);
-    }
+    log('error', `ОШИБКА ${statusCode ? `[${statusCode}] ` : ''}${reason}`);
+    if (e.message && e.message !== reason) log('error', `Детали: ${chalk.dim(e.message)}`);
   }
 }
 
