@@ -73,8 +73,11 @@ function buildStats(db) {
   };
 }
 
-// Forward all logs to web clients in real time
-addLogListener(entry => broadcast('log', entry));
+// Strip ANSI escape codes before sending to browser
+const ANSI_RE = /\x1B\[[0-9;]*[mGKHFJK]/g;
+function stripAnsi(s) { return String(s).replace(ANSI_RE, ''); }
+
+addLogListener(entry => broadcast('log', { ...entry, message: stripAnsi(entry.message) }));
 
 // ─── API ─────────────────────────────────────────────────────────────────────
 
