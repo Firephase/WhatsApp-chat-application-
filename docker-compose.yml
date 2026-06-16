@@ -1,0 +1,9 @@
+services:
+  whatsapp-analyzer:
+    build: .
+    container_name: wa-analyzer
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    stdin_open: true
+    tty: true
