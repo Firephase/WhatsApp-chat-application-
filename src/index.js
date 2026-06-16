@@ -70,7 +70,7 @@ async function connectToWhatsApp() {
     if (!keywords.length) return;
 
     for (const msg of messages) {
-      if (!msg.message || msg.key.fromMe) continue;
+      if (!msg.message) continue;
       const jid = msg.key.remoteJid;
       if (!jid?.endsWith('@g.us')) continue;
 
