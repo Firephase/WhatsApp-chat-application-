@@ -10,7 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { saveMessage, getKeywords, getDb } from './db.js';
 import { log, startInteractiveMode, joinLink, setSocket } from './ui.js';
-import { startServer, broadcast } from './server.js';
+import { startServer, setQR, setConnected, broadcast } from './server.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AUTH_DIR  = path.join(__dirname, '../data/auth');
@@ -37,13 +37,13 @@ async function connectToWhatsApp() {
 
     if (qr) {
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 300 });
-      broadcast('qr', dataUrl);
+      setQR(dataUrl);
       log('connect', 'QR-код обновлён — открой веб-интерфейс для сканирования');
     }
 
     if (connection === 'open') {
       setSocket(sock);
-      broadcast('connected', null);
+      setConnected(true);
       log('success', 'Подключено к WhatsApp');
       startInteractiveMode(sock);
       await processPendingLinks();
@@ -51,7 +51,7 @@ async function connectToWhatsApp() {
 
     if (connection === 'close') {
       setSocket(null);
-      broadcast('disconnected', null);
+      setConnected(false);
       const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
       if (reason === DisconnectReason.loggedOut) {
         log('error', 'Аккаунт разлогинен. Удали папку data/auth/ и перезапусти.');

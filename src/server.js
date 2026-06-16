@@ -19,13 +19,32 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
 const clients = new Set();
+let lastQR = null;
+let isConnected = false;
 
 wss.on('connection', ws => {
   clients.add(ws);
   ws.on('close', () => clients.delete(ws));
-  // send current stats immediately on connect
   sendStats(ws);
+  // immediately replay last known state to new client
+  if (isConnected) {
+    ws.send(JSON.stringify({ type: 'connected', data: null }));
+  } else if (lastQR) {
+    ws.send(JSON.stringify({ type: 'qr', data: lastQR }));
+  }
 });
+
+export function setQR(dataUrl) {
+  lastQR = dataUrl;
+  isConnected = false;
+  broadcast('qr', dataUrl);
+}
+
+export function setConnected(val) {
+  isConnected = val;
+  if (val) { lastQR = null; broadcast('connected', null); }
+  else broadcast('disconnected', null);
+}
 
 export function broadcast(type, data) {
   const msg = JSON.stringify({ type, data });
